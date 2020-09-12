@@ -12,6 +12,14 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using BulkyBook.DataAccess.Data;
+using BulkyBook.DataAccess.Repository.IRepository;
+using BulkyBook.DataAccess.Repository;
+using Microsoft.AspNetCore.Identity.UI.Services;
+using BulkyBook.Utility;
+using Microsoft.CodeAnalysis.Options;
+using Stripe;
+using Microsoft.AspNetCore.Mvc.ViewFeatures;
+using BulkyBook.DataAccess.Initializer;
 
 namespace BulkyBook
 {
@@ -30,15 +38,46 @@ namespace BulkyBook
 			services.AddDbContext<ApplicationDbContext>(options =>
 				options.UseSqlServer(
 					Configuration.GetConnectionString("DefaultConnection")));
-			services.AddDefaultIdentity<IdentityUser>().AddEntityFrameworkStores<ApplicationDbContext>();
+			services.AddIdentity<IdentityUser,IdentityRole>().AddDefaultTokenProviders().AddEntityFrameworkStores<ApplicationDbContext>();
 			//services.AddDefaultIdentity<IdentityUser>(options => options.SignIn.RequireConfirmedAccount = true)
 			//	.AddEntityFrameworkStores<ApplicationDbContext>();
+			services.AddSingleton<IEmailSender, EmailSender>();
+			services.AddSingleton<ITempDataProvider, CookieTempDataProvider>();
+
+			services.Configure<EmailOptions>(Configuration);
+			services.Configure<StripeSettings>(Configuration.GetSection("Stripe"));
+			services.Configure<TwilioSettings>(Configuration.GetSection("Twilio"));
+			services.AddScoped<IUnitOfWork, UnitOfWork>();
+			services.AddScoped<IDbInitializer, DbInitializer>();
 			services.AddControllersWithViews().AddRazorRuntimeCompilation();
 			services.AddRazorPages();
+			services.ConfigureApplicationCookie(options =>
+			{
+				options.LoginPath = $"/Identity/Account/Login";
+				options.LogoutPath = $"/Identity/Account/Logout";
+				options.AccessDeniedPath = $"/Identity/Account/AccessDenied";
+			});
+			services.AddAuthentication().AddFacebook(Option =>
+			{
+				Option.AppId = "351534629219294";
+				Option.AppSecret = "142a42ca32f5e0aa43f9ac2dfb623202";
+			});
+			services.AddAuthentication().AddGoogle(Option =>
+			{
+				Option.ClientId = "534012748282-rj7gjhu00003r25ee8ff7aghjvqtbjnc.apps.googleusercontent.com";
+				Option.ClientSecret = "5VaL5143hFl9HdrNRUUZGAd9";
+			});
+
+			services.AddSession(options =>
+			{
+				options.IdleTimeout = TimeSpan.FromMinutes(30);
+				options.Cookie.HttpOnly = true;
+				options.Cookie.IsEssential = true;
+			});
 		}
 
 		// This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-		public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+		public void Configure(IApplicationBuilder app, IWebHostEnvironment env, IDbInitializer dbInitializer)
 		{
 			if (env.IsDevelopment())
 			{
@@ -55,9 +94,12 @@ namespace BulkyBook
 			app.UseStaticFiles();
 
 			app.UseRouting();
+			StripeConfiguration.ApiKey = Configuration.GetSection("Stripe")["SecretKey"];
+			app.UseSession();
 
 			app.UseAuthentication();
 			app.UseAuthorization();
+			dbInitializer.Initialize();
 
 			app.UseEndpoints(endpoints =>
 			{
